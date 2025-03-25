@@ -56,11 +56,10 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
   constructor(server: IDbConnectionServer, database: IDbConnectionDatabase) {
     super(knex, sqliteContext, server, database);
 
-    this.dialect = "sqlite";
+    this.dialect = 'sqlite';
     this.readOnlyMode = server?.config?.readOnlyMode || false;
     this.databasePath = database?.database;
-    this.isTempDB =
-      _.isEmpty(this.databasePath) || this.databasePath === ":memory:";
+    this.isTempDB = _.isEmpty(this.databasePath) || this.databasePath === ':memory:';
   }
 
   async versionString(): Promise<string> {
@@ -89,14 +88,10 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     await super.connect();
 
     // verify that the connection is valid
-    await this.driverExecuteSingle("PRAGMA schema_version", {
-      overrideReadonly: true,
-    });
+    await this.driverExecuteSingle('PRAGMA schema_version', { overrideReadonly: true });
 
     // set sqlite version
-    const version = await this.driverExecuteSingle(
-      "SELECT sqlite_version() as version"
-    );
+    const version = await this.driverExecuteSingle('SELECT sqlite_version() as version');
     this.version = version;
 
     return;
@@ -109,7 +104,7 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     // This may cause connection limit problem. So we may have to change this at some point.
     return Promise.resolve();
     try {
-      this.knex.destroy();
+      this.knex.destroy()
     } catch {
       // don't worry if this doesn't work.
     }
@@ -144,72 +139,45 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     return Promise.resolve([]); // DOES NOT SUPPORT IT
   }
 
-  listMaterializedViewColumns(
-    _table: string,
-    _schema?: string
-  ): Promise<TableColumn[]> {
+  listMaterializedViewColumns(_table: string, _schema?: string): Promise<TableColumn[]> {
     return Promise.resolve([]); // DOES NOT SUPPORT IT
   }
 
-  async listTableColumns(
-    table?: string,
-    _schema?: string
-  ): Promise<ExtendedTableColumn[]> {
+  async listTableColumns(table?: string, _schema?: string): Promise<ExtendedTableColumn[]> {
     if (table) {
-      const pragmaSQL = `PRAGMA table_xinfo(${SD.escapeString(table, true)})`;
-      const createSQLQuery = `SELECT sql FROM sqlite_master WHERE tbl_name = ${SD.escapeString(
-        table,
-        true
-      )} AND type='table'`;
+      const sql = `PRAGMA table_xinfo(${SD.escapeString(table, true)})`;
 
-      const [pragmaResult, createResult] = await Promise.all([
-        this.driverExecuteSingle(pragmaSQL, { overrideReadonly: true }),
-        this.driverExecuteSingle(createSQLQuery, { overrideReadonly: true }),
-      ]);
-
-      const rows = pragmaResult.rows;
-      const createSQL = createResult.rows?.[0]?.sql ?? "";
-
-      const autoIncColumns = this.extractAutoIncrementColumns(createSQL);
-
-      return this.dataToColumns(rows, table, autoIncColumns);
+      const { rows } = await this.driverExecuteSingle(sql, { overrideReadonly: true });
+      return this.dataToColumns(rows, table);
     }
 
-    // Para várias tabelas (opcional manter esta lógica ou adaptar depois)
-    const allTables = (await this.listTables()) || [];
-    const allViews = (await this.listViews()) || [];
-    const tables = allTables.concat(allViews);
+    const allTables = (await this.listTables()) || []
+    const allViews = (await this.listViews()) || []
+    const tables = allTables.concat(allViews)
 
     const everything = tables.map((table) => {
       return {
         tableName: table.name,
         sql: `PRAGMA table_xinfo(${SD.escapeString(table.name, true)})`,
-        results: null,
-      };
-    });
+        results: null
+      }
+    })
 
-    const query = everything.map((e) => e.sql).join(";");
-    const allResults = await this.driverExecuteMultiple(query, {
-      overrideReadonly: true,
-    });
+    const query = everything.map((e) => e.sql).join(";")
+    const allResults = await this.driverExecuteMultiple(query, { overrideReadonly: true });
     const results = allResults.map((r, i) => {
       return {
         result: r,
-        ...everything[i],
-      };
-    });
+        ...everything[i]
+      }
+    })
+    const final = _.flatMap(results, (item, _idx) => this.dataToColumns(item.result.rows, item.tableName))
 
-    const final = _.flatMap(results, (item, _idx) =>
-      this.dataToColumns(item.result.rows, item.tableName)
-    );
-
-    return final;
+    log.info('FINAL: ', final)
+    return final
   }
 
-  async listTableTriggers(
-    table: string,
-    _schema?: string
-  ): Promise<TableTrigger[]> {
+  async listTableTriggers(table: string, _schema?: string): Promise<TableTrigger[]> {
     const sql = `
       SELECT name, sql
       FROM sqlite_master
@@ -219,41 +187,30 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
 
     const { rows } = await this.driverExecuteSingle(sql);
 
-    return rows as TableTrigger[];
+    return rows as TableTrigger[]
   }
 
-  async listTableIndexes(
-    table: string,
-    _schema?: string
-  ): Promise<TableIndex[]> {
+  async listTableIndexes(table: string, _schema?: string): Promise<TableIndex[]> {
     const sql = `PRAGMA index_list('${SD.escapeString(table)}')`;
 
-    const { rows } = await this.driverExecuteSingle(sql, {
-      overrideReadonly: true,
-    });
+    const { rows } = await this.driverExecuteSingle(sql, { overrideReadonly: true });
 
-    const allSQL = rows
-      .map((row) => `PRAGMA index_xinfo('${SD.escapeString(row.name)}')`)
-      .join(";");
-    const infos = await this.driverExecuteMultiple(allSQL, {
-      overrideReadonly: true,
-    });
+    const allSQL = rows.map((row) => `PRAGMA index_xinfo('${SD.escapeString(row.name)}')`).join(";");
+    const infos = await this.driverExecuteMultiple(allSQL, { overrideReadonly: true });
 
     const indexColumns: IndexColumn[][] = infos.map((result) => {
-      return result.rows
-        .filter((r) => !!r.name)
-        .map((r) => ({ name: r.name, order: r.desc ? "DESC" : "ASC" }));
-    });
+      return result.rows.filter((r) => !!r.name).map((r) => ({ name: r.name, order: r.desc ? 'DESC' : 'ASC' }))
+    })
 
     return rows.map((row, idx) => ({
       id: row.seq,
       name: row.name,
       unique: row.unique === 1,
-      primary: row.origin === "pk",
+      primary: row.origin === 'pk',
       columns: indexColumns[idx],
-      schema: "",
+      schema: '',
       table,
-    }));
+    }))
   }
 
   listSchemas(_filter?: SchemaFilterOptions): Promise<string[]> {
@@ -265,22 +222,20 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
   }
 
   async getTableKeys(table: string, _schema?: string): Promise<TableKey[]> {
-    const sql = `pragma foreign_key_list('${SD.escapeString(table)}')`;
-    const { rows } = await this.driverExecuteSingle(sql, {
-      overrideReadonly: true,
-    });
-    return rows.map((row) => ({
+    const sql = `pragma foreign_key_list('${SD.escapeString(table)}')`
+    const { rows } = await this.driverExecuteSingle(sql, { overrideReadonly: true });
+    return rows.map(row => ({
       constraintName: row.id,
-      constraintType: "FOREIGN",
+      constraintType: 'FOREIGN',
       toTable: row.table,
-      toSchema: "",
-      fromSchema: "",
+      toSchema: '',
+      fromSchema: '',
       fromTable: table,
       fromColumn: row.from,
       toColumn: row.to,
       onUpdate: row.on_update,
-      onDelete: row.on_delete,
-    }));
+      onDelete: row.on_delete
+    }))
   }
 
   async query(queryText: string): Promise<CancelableQuery> {
@@ -291,22 +246,16 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
         try {
           queryConnection = this.acquireConnection();
 
-          const result = await this.executeQuery(queryText, {
-            connection: queryConnection,
-            arrayMode: true,
-          });
+          const result = await this.executeQuery(queryText, { connection: queryConnection, arrayMode: true });
           return result;
         } catch (err) {
           if (err.code === sqliteErrors.CANCELED) {
-            err.sqlectronError = "CANCELED_BY_USER";
+            err.sqlectronError = 'CANCELED_BY_USER';
           }
 
-          if (err.message?.startsWith("no such column")) {
-            const nuError = new ClientError(
-              `${err.message} - Check that you only use double quotes (") for identifiers, not strings`,
-              "https://docs.beekeeperstudio.io/pages/troubleshooting#no-such-column-x"
-            );
-            throw nuError;
+          if (err.message?.startsWith('no such column')) {
+            const nuError = new ClientError(`${err.message} - Check that you only use double quotes (") for identifiers, not strings`, "https://docs.beekeeperstudio.io/pages/troubleshooting#no-such-column-x");
+            throw nuError
           }
 
           throw err;
@@ -318,16 +267,13 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
       }).bind(this),
       async cancel() {
         if (!queryConnection) {
-          throw new Error("Query not ready to be canceled");
+          throw new Error('Query not ready to be canceled');
         }
-      },
-    };
+      }
+    }
   }
 
-  async executeQuery(
-    queryText: string,
-    options: any = {}
-  ): Promise<NgQueryResult[]> {
+  async executeQuery(queryText: string, options: any = {}): Promise<NgQueryResult[]> {
     const arrayMode: boolean = options.arrayMode;
     const result = await this.driverExecuteMultiple(queryText, options);
 
@@ -341,20 +287,20 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
         rows = data.map((row: any[]) =>
           row.reduce((obj, val, idx) => {
             obj[`c${idx}`] = val;
-            return obj;
+            return obj
           }, {})
         );
         fields = columns.map((column, idx) => ({
           id: `c${idx}`,
-          name: column.name,
-        }));
+          name: column.name
+        }))
       } else {
         rows = data || [];
-        fields = Object.keys(rows[0] || {}).map((name) => ({ name, id: name }));
+        fields = Object.keys(rows[0] || {}).map((name) => ({name, id: name }));
       }
 
       return {
-        command: statement.type || (isSelect && "SELECT"),
+        command: statement.type || (isSelect && 'SELECT'),
         rows,
         fields,
         rowCount: data && data.length,
@@ -364,18 +310,16 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
   }
 
   async listDatabases(_filter?: DatabaseFilterOptions): Promise<string[]> {
-    const result = await this.driverExecuteSingle("PRAGMA database_list;", {
-      overrideReadonly: true,
-    });
+    const result = await this.driverExecuteSingle('PRAGMA database_list;', { overrideReadonly: true });
 
-    return result.rows.map((row) => row.file || ":memory:");
+    return result.rows.map((row) => row.file || ':memory:');
   }
 
   async executeApplyChanges(changes: TableChanges): Promise<any[]> {
     let results = [];
 
     const cli = { connection: this.acquireConnection() };
-    await this.driverExecuteSingle("BEGIN", cli);
+    await this.driverExecuteSingle('BEGIN', cli);
 
     try {
       if (changes.inserts) {
@@ -390,10 +334,10 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
         await this.deleteRows(cli, changes.deletes);
       }
 
-      await this.driverExecuteSingle("COMMIT", cli);
+      await this.driverExecuteSingle('COMMIT', cli);
     } catch (ex) {
       log.error("query exception: ", ex);
-      await this.driverExecuteSingle("ROLLBACK", cli);
+      await this.driverExecuteSingle('ROLLBACK', cli);
       throw ex;
     } finally {
       if (cli.connection !== this._rawConnection) {
@@ -404,31 +348,29 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     return results;
   }
 
-  async getQuerySelectTop(
-    table: string,
-    limit: number,
-    _schema?: string
-  ): Promise<string> {
+  async getQuerySelectTop(table: string, limit: number, _schema?: string): Promise<string> {
     return `SELECT * FROM ${this.wrapIdentifier(table)} LIMIT ${limit}`;
   }
 
-  async getTableProperties(
-    table: string,
-    _schema?: string
-  ): Promise<TableProperties> {
-    const [length, indexes, triggers, relations] = await Promise.all([
+  async getTableProperties(table: string, _schema?: string): Promise<TableProperties> {
+    const [
+      length,
+      indexes,
+      triggers,
+      relations
+    ] = await Promise.all([
       this.getTableLength(table),
       this.listTableIndexes(table),
       this.listTableTriggers(table),
-      this.getTableKeys(table),
-    ]);
+      this.getTableKeys(table)
+    ])
     return {
       size: length,
       indexes,
       relations,
       triggers,
-      partitions: [],
-    };
+      partitions: []
+    }
   }
 
   async getTableCreateScript(table: string, _schema?: string): Promise<string> {
@@ -455,24 +397,16 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     return rows.map((row) => row.sql);
   }
 
-  getRoutineCreateScript(
-    _routine: string,
-    _type: string,
-    _schema?: string
-  ): Promise<string[]> {
+  getRoutineCreateScript(_routine: string, _type: string, _schema?: string): Promise<string[]> {
     return Promise.resolve([]); // DOES NOT SUPPORT IT
   }
 
   async truncateAllTables(_db?: string, _schema?: string): Promise<void> {
     const tables = await this.listTables();
 
-    const truncateAll = tables
-      .map(
-        (table) => `
+    const truncateAll = tables.map((table) => `
         DELETE FROM ${table.name};
-      `
-      )
-      .join("");
+      `).join('');
 
     // TODO: Check if sqlite_sequence exists then execute:
     // DELETE FROM sqlite_sequence WHERE name='${table}';
@@ -486,192 +420,100 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
 
   async getPrimaryKey(table: string, schema?: string): Promise<string> {
     const keys = await this.getPrimaryKeys(table, schema);
-    return keys.length === 1 ? keys[0].columnName : null;
+    return keys.length === 1 ? keys[0].columnName : null
   }
 
-  async getPrimaryKeys(
-    table: string,
-    _schema?: string
-  ): Promise<PrimaryKeyColumn[]> {
-    const sql = `pragma table_xinfo('${SD.escapeString(table)}')`;
-    const { rows } = await this.driverExecuteSingle(sql, {
-      overrideReadonly: true,
-    });
-    const found = rows.filter((r) => r.pk > 0);
-    if (!found || found.length === 0) return [];
+  async getPrimaryKeys(table: string, _schema?: string): Promise<PrimaryKeyColumn[]> {
+    const sql = `pragma table_xinfo('${SD.escapeString(table)}')`
+    const { rows } = await this.driverExecuteSingle(sql, { overrideReadonly: true });
+    const found = rows.filter(r => r.pk > 0)
+    if (!found || found.length === 0) return []
     return found.map((r) => ({
       columnName: r.name,
-      position: Number(r.pk),
-    }));
+      position: Number(r.pk)
+    }))
   }
 
   async getTableLength(table: string, _schema?: string): Promise<number> {
-    const { countQuery, params } = buildSelectTopQuery(
-      table,
-      null,
-      null,
-      null,
-      []
-    );
+    const { countQuery, params } = buildSelectTopQuery(table, null, null, null, [])
     const countResults = await this.driverExecuteSingle(countQuery, { params });
-    const rowWithTotal = countResults.rows.find((row) => {
-      return row.total;
-    });
-    const totalRecords = rowWithTotal ? rowWithTotal.total : 0;
-    return Number(totalRecords);
+    const rowWithTotal = countResults.rows.find((row) => { return row.total })
+    const totalRecords = rowWithTotal ? rowWithTotal.total : 0
+    return Number(totalRecords)
   }
 
-  async selectTop(
-    table: string,
-    offset: number,
-    limit: number,
-    orderBy: OrderBy[],
-    filters: string | TableFilter[],
-    schema?: string,
-    selects?: string[]
-  ): Promise<TableResult> {
-    const query = await this.selectTopSql(
-      table,
-      offset,
-      limit,
-      orderBy,
-      filters,
-      schema,
-      selects
-    );
+  async selectTop(table: string, offset: number, limit: number, orderBy: OrderBy[], filters: string | TableFilter[], schema?: string, selects?: string[]): Promise<TableResult> {
+    const query = await this.selectTopSql(table, offset, limit, orderBy, filters, schema, selects);
     const result = await this.driverExecuteSingle(query);
     const fields = this.parseQueryResultColumns(result);
     const rows = await this.serializeQueryResult(result, fields);
     return { result: rows, fields };
   }
 
-  async selectTopSql(
-    table: string,
-    offset: number,
-    limit: number,
-    orderBy: OrderBy[],
-    filters: string | TableFilter[],
-    _schema?: string,
-    selects?: string[]
-  ): Promise<string> {
-    const { query, params } = buildSelectTopQuery(
-      table,
-      offset,
-      limit,
-      orderBy,
-      filters,
-      undefined,
-      undefined,
-      selects
-    );
+  async selectTopSql(table: string, offset: number, limit: number, orderBy: OrderBy[], filters: string | TableFilter[], _schema?: string, selects?: string[]): Promise<string> {
+    const { query, params } = buildSelectTopQuery(table, offset, limit, orderBy, filters, undefined, undefined, selects);
     return this.knex.raw(query, params).toQuery();
   }
 
-  async selectTopStream(
-    table: string,
-    orderBy: OrderBy[],
-    filters: string | TableFilter[],
-    chunkSize: number,
-    _schema?: string
-  ): Promise<StreamResults> {
-    const qs = buildSelectTopQuery(table, null, null, orderBy, filters);
-    const columns = await this.listTableColumns(table);
-    const rowCount = await this.getTableLength(table);
-    const { query, params } = qs;
+  async selectTopStream(table: string, orderBy: OrderBy[], filters: string | TableFilter[], chunkSize: number, _schema?: string): Promise<StreamResults> {
+    const qs = buildSelectTopQuery(table, null, null, orderBy, filters)
+    const columns = await this.listTableColumns(table)
+    const rowCount = await this.getTableLength(table)
+    const { query, params } = qs
     return {
       totalRows: rowCount,
       columns,
-      cursor: this.createCursor(
-        this.isTempDB ? this.acquireConnection() : this.databasePath,
-        query,
-        params,
-        chunkSize
-      ),
-    };
+      cursor: this.createCursor(this.isTempDB ? this.acquireConnection() : this.databasePath, query, params, chunkSize)
+    }
   }
 
   async queryStream(query: string, chunkSize: number): Promise<StreamResults> {
-    const { columns, totalRows } = await this.getColumnsAndTotalRows(query);
+    const { columns, totalRows } = await this.getColumnsAndTotalRows(query)
 
     return {
       totalRows,
       columns,
-      cursor: this.createCursor(
-        this.isTempDB ? this.acquireConnection() : this.databasePath,
-        query,
-        [],
-        chunkSize
-      ),
+      cursor: this.createCursor(this.isTempDB ? this.acquireConnection() : this.databasePath, query, [], chunkSize)
     };
   }
 
   wrapIdentifier(value: string): string {
-    if (value === "*") return value;
+    if (value === '*') return value;
     const matched = value.match(/(.*?)(\[[0-9]\])/); // eslint-disable-line no-useless-escape
     if (matched) return this.wrapIdentifier(matched[1]) + matched[2];
     return `"${value.replace(/"/g, '""')}"`;
   }
 
-  setTableDescription(
-    _table: string,
-    _description: string,
-    _schema?: string
-  ): Promise<string> {
+  setTableDescription(_table: string, _description: string, _schema?: string): Promise<string> {
     throw new Error("Method not implemented.");
   }
 
-  async setElementNameSql(
-    elementName: string,
-    newElementName: string,
-    typeOfElement: DatabaseElement
-  ): Promise<string> {
+  async setElementNameSql(elementName: string, newElementName: string, typeOfElement: DatabaseElement): Promise<string> {
     if (typeOfElement !== DatabaseElement.TABLE) {
-      return "";
+      return ''
     }
 
-    return `ALTER TABLE ${this.wrapIdentifier(
-      elementName
-    )} RENAME TO ${this.wrapIdentifier(newElementName)};`;
+    return `ALTER TABLE ${this.wrapIdentifier(elementName)} RENAME TO ${this.wrapIdentifier(newElementName)};`
   }
 
-  async dropElement(
-    elementName: string,
-    typeOfElement: DatabaseElement,
-    _schema?: string
-  ): Promise<void> {
-    const sql = `DROP ${SD.wrapLiteral(typeOfElement)} ${this.wrapIdentifier(
-      elementName
-    )}`;
+  async dropElement(elementName: string, typeOfElement: DatabaseElement, _schema?: string): Promise<void> {
+    const sql = `DROP ${SD.wrapLiteral(typeOfElement)} ${this.wrapIdentifier(elementName)}`
 
     await this.driverExecuteSingle(sql);
   }
 
-  async truncateElementSql(
-    elementName: string,
-    _typeOfElement: DatabaseElement,
-    _schema?: string
-  ): Promise<string> {
-    return `Delete from ${SD.wrapIdentifier(elementName)}; vacuum;`;
+  async truncateElementSql(elementName: string, _typeOfElement: DatabaseElement, _schema?: string): Promise<string> {
+    return `Delete from ${SD.wrapIdentifier(elementName)}; vacuum;`
   }
 
-  async duplicateTable(
-    tableName: string,
-    duplicateTableName: string,
-    _schema?: string
-  ): Promise<void> {
+  async duplicateTable(tableName: string, duplicateTableName: string, _schema?: string): Promise<void> {
     const sql = await this.duplicateTableSql(tableName, duplicateTableName);
 
     await this.driverExecuteSingle(sql);
   }
 
-  async duplicateTableSql(
-    tableName: string,
-    duplicateTableName: string,
-    _schema?: string
-  ): Promise<string> {
-    return `CREATE TABLE ${SD.wrapIdentifier(
-      duplicateTableName
-    )} AS SELECT * FROM ${SD.wrapIdentifier(tableName)};`;
+  async duplicateTableSql(tableName: string, duplicateTableName: string, _schema?: string): Promise<string> {
+    return `CREATE TABLE ${SD.wrapIdentifier(duplicateTableName)} AS SELECT * FROM ${SD.wrapIdentifier(tableName)};`
   }
 
   async listCharsets(): Promise<string[]> {
@@ -686,11 +528,7 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     return [];
   }
 
-  async createDatabase(
-    databaseName: string,
-    _charset: string,
-    _collation: string
-  ): Promise<string> {
+  async createDatabase(databaseName: string, _charset: string, _collation: string): Promise<string> {
     // because this is a convenience for an otherwise ez-pz action, the location of the db file will be in the same location as the other .db files.
     // If the desire for a "but I want this in another directory" is ever wanted, it can be included but for now this feels like it suits the current needs.
     const fileLocation = path.parse(this.databasePath).dir;
@@ -717,40 +555,23 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     }
   }
 
-  async importTruncateCommand(
-    table: TableOrView,
-    { executeOptions }: ImportFuncOptions
-  ): Promise<any> {
-    const { name } = table;
-    return this.rawExecuteQuery(
-      `Delete from ${SD.wrapIdentifier(name)}`,
-      executeOptions
-    );
+  async importTruncateCommand (table: TableOrView, { executeOptions }: ImportFuncOptions): Promise<any> {
+    const { name } = table
+    return this.rawExecuteQuery(`Delete from ${SD.wrapIdentifier(name)}`, executeOptions)
   }
 
-  async importLineReadCommand(
-    _table: TableOrView,
-    sqlString: string,
-    { executeOptions }: ImportFuncOptions
-  ): Promise<any> {
-    return this.rawExecuteQuery(sqlString, executeOptions);
+  async importLineReadCommand (_table: TableOrView, sqlString: string, { executeOptions }: ImportFuncOptions): Promise<any> {
+    return this.rawExecuteQuery(sqlString, executeOptions)
   }
 
-  protected async rawExecuteQuery(
-    q: string,
-    options: any
-  ): Promise<SqliteResult | SqliteResult[]> {
+  protected async rawExecuteQuery(q: string, options: any): Promise<SqliteResult | SqliteResult[]> {
     const queries = this.identifyCommands(q);
-    const params = (options.params || []).map((p) =>
-      _.isBoolean(p) ? Number(p) : p
-    );
+    const params = (options.params || []).map((p) => _.isBoolean(p) ? Number(p) : p);
     const arrayMode = options.arrayMode;
 
     const results: SqliteResult[] = [];
 
-    const connection = options.connection
-      ? options.connection
-      : this.acquireConnection();
+    const connection = options.connection ? options.connection : this.acquireConnection();
     const acquiredNewConnection = options.connection ? false : true;
     // Fix (part 1 of 2) Issue #1399 - int64s not displaying properly
     // Binds ALL better-sqlite3 integer columns as BigInts by default
@@ -774,7 +595,7 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
           if (arrayMode) {
             statement.raw();
           }
-          rows = statement.all(params);
+          rows = statement.all(params)
           columns = statement.columns();
         } else {
           runResult = statement.run(params);
@@ -806,7 +627,7 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
   protected acquireConnection(): Database.Database {
     if (this.isTempDB) {
       if (!this._rawConnection) {
-        this._rawConnection = this.createRawConnection(":memory:");
+        this._rawConnection = this.createRawConnection(':memory:');
       }
       return this._rawConnection;
     }
@@ -817,31 +638,22 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
     return new Database(filename);
   }
 
-  protected checkReader(
-    _queryIdentifyResult: IdentifyResult,
-    statement: Database.Statement
-  ): boolean {
+  protected checkReader(_queryIdentifyResult: IdentifyResult, statement: Database.Statement): boolean {
     return statement.reader;
   }
 
-  protected createCursor(
-    ...args: ConstructorParameters<typeof SqliteCursor>
-  ): SqliteCursor {
+  protected createCursor(...args: ConstructorParameters<typeof SqliteCursor>): SqliteCursor {
     return new SqliteCursor(...args);
   }
 
   protected _createDatabase(path: string) {
-    const db = new Database(path);
-    db.close();
+    const db = new Database(path)
+    db.close()
   }
 
-  private dataToColumns(
-    data: any[],
-    tableName: string,
-    autoIncColumns?: Set<string>
-  ): ExtendedTableColumn[] {
+  private dataToColumns(data: any[], tableName: string): ExtendedTableColumn[] {
     return data.map((row) => {
-      const defaultValue = row.dflt_value === "NULL" ? null : row.dflt_value;
+      const defaultValue = row.dflt_value === 'NULL' ? null : row.dflt_value
       return {
         tableName,
         columnName: row.name,
@@ -851,15 +663,14 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
         ordinalPosition: Number(row.cid),
         hasDefault: !_.isNil(defaultValue),
         generated: Number(row.hidden) === 2 || Number(row.hidden) === 3,
-        autoIncrement: autoIncColumns?.has(row.name) || false,
         bksField: this.parseTableColumn(row),
-      };
-    });
+      }
+    })
   }
 
   private identifyCommands(queryText: string) {
     try {
-      return identify(queryText, { strict: false, dialect: "sqlite" });
+      return identify(queryText, { strict: false, dialect: 'sqlite' });
     } catch (err) {
       return [];
     }
@@ -870,105 +681,77 @@ export class SqliteClient extends BasicDatabaseClient<SqliteResult> {
       await this.driverExecuteSingle(command, cli);
     }
 
-    return true;
+    return true
   }
 
   private async updateValues(cli: any, updates: TableUpdate[]) {
-    const commands = updates.map((update) => {
-      const params = [
-        _.isBoolean(update.value) ? _.toInteger(update.value) : update.value,
-      ];
-      const whereList = [];
+    const commands = updates.map(update => {
+      const params = [_.isBoolean(update.value) ? _.toInteger(update.value) : update.value];
+      const whereList = []
       update.primaryKeys.forEach(({ column, value }) => {
         whereList.push(`${this.wrapIdentifier(column)} = ?`);
         params.push(value);
-      });
+      })
 
       const where = whereList.join(" AND ");
 
       return {
         query: `UPDATE ${update.table} SET ${update.column} = ? WHERE ${where}`,
-        params: params,
-      };
-    });
+        params: params
+      }
+    })
 
-    const results = [];
+    const results = []
     // TODO: this should probably return the updated values
     for (let index = 0; index < commands.length; index++) {
       const blob = commands[index];
-      await this.driverExecuteSingle(blob.query, {
-        ...cli,
-        params: blob.params,
-      });
+      await this.driverExecuteSingle(blob.query, { ...cli, params: blob.params });
     }
 
-    const returnQueries = updates.map((update) => {
+    const returnQueries = updates.map(update => {
+
       const params = [];
-      const whereList = [];
+      const whereList = []
       update.primaryKeys.forEach(({ column, value }) => {
-        log.log("updateValues, column, value", column, value);
+        log.log('updateValues, column, value', column, value)
         whereList.push(`${this.wrapIdentifier(column)} = ?`);
         params.push(value);
-      });
+      })
 
       const where = whereList.join(" AND ");
 
       return {
         query: `select * from "${update.table}" where ${where}`,
-        params: params,
-      };
-    });
+        params: params
+      }
+    })
 
     for (let index = 0; index < returnQueries.length; index++) {
       const blob = returnQueries[index];
-      const r = await this.driverExecuteSingle(blob.query, {
-        ...cli,
-        params: blob.params,
-      });
-      if (r.rows[0]) results.push(r.rows[0]);
+      const r = await this.driverExecuteSingle(blob.query, { ...cli, params: blob.params });
+      if (r.rows[0]) results.push(r.rows[0])
     }
 
-    return results;
+    return results
   }
 
   private async deleteRows(cli: any, deletes: TableDelete[]) {
     for (const command of buildDeleteQueries(knex, deletes)) {
-      await this.driverExecuteSingle(command, cli);
+      await this.driverExecuteSingle(command, cli)
     }
 
-    return true;
+    return true
   }
 
   parseQueryResultColumns(qr: SqliteResult): BksField[] {
     return qr.columns.map(this.parseTableColumn);
   }
 
-  parseTableColumn(column: { name: string; type: string }): BksField {
+  parseTableColumn(column: { name: string, type: string }): BksField {
     let bksType: BksFieldType = "UNKNOWN";
     if (column.type === "BLOB") {
       bksType = "BINARY";
     }
     return { name: column.name, bksType };
-  }
-
-  private extractAutoIncrementColumns(createSQL: string): Set<string> {
-    const autoIncColumns = new Set<string>();
-
-    const match = createSQL.match(/\(([\s\S]+)\)/); // Tudo entre os parênteses da definição da tabela
-    if (!match) return autoIncColumns;
-
-    const columnsBlock = match[1];
-    const lines = columnsBlock.split(/,(?![^(]*\))/); // Divide por vírgula, ignorando as que estão entre parênteses
-
-    for (const line of lines) {
-      if (/AUTOINCREMENT/i.test(line)) {
-        const columnMatch = line.trim().match(/^["`]?(\w+)["`]?/); // captura o nome da coluna
-        if (columnMatch) {
-          autoIncColumns.add(columnMatch[1]);
-        }
-      }
-    }
-
-    return autoIncColumns;
   }
 }

@@ -105,25 +105,16 @@
 </template>
 
 <style scoped>
-.columns-loading-disclaimer {
-  width: 100%;
-  text-align: center;
-  font-weight: 700;
-  font-size: 20px;
-}
+  .columns-loading-disclaimer {
+    width: 100%;
+    text-align: center;
+    font-weight: 700;
+    font-size: 20px;
 
-.tabulator + .columns-loading-disclaimer {
-  display: none;
-}
-
-.auto-increment-badge {
-  background-color: #17a2b8;
-  color: white;
-  padding: 2px 5px;
-  border-radius: 3px;
-  font-size: 0.8em;
-  margin-left: 5px;
-}
+  }
+  .tabulator + .columns-loading-disclaimer {
+    display: none;
+  }
 </style>
 
 <script lang="ts">
@@ -132,6 +123,7 @@ import DataMutators from '../../mixins/data_mutators'
 import { format } from 'sql-formatter'
 import _ from 'lodash'
 import Vue from 'vue'
+// import globals from '../../common/globals'
 import { vueEditor, vueFormatter, trashButton, TabulatorStateWatchers, moveRowHandle } from '@shared/lib/tabulator/helpers'
 import CheckboxFormatterVue from '@shared/components/tabulator/CheckboxFormatter.vue'
 import CheckboxEditorVue from '@shared/components/tabulator/CheckboxEditor.vue'
@@ -154,6 +146,7 @@ const FakeCell = {
   }),
   getField: () => 'fake',
   getValue: () => 'fake'
+
 }
 
 export default Vue.extend({
@@ -198,6 +191,7 @@ export default Vue.extend({
       })
     },
     editable() {
+      // (sept 23) we don't need a primary key to make schemas editable
       return this.table.entityType === 'table' &&
         !this.dialectData.disabledFeatures?.alter?.everything
     },
@@ -235,10 +229,10 @@ export default Vue.extend({
           editor: vueEditor(NullableInputEditorVue),
           cellEdited: this.cellEdited,
           tooltip: this.columnNameCellTooltip.bind(this),
-          formatter: (cell) => escapeHtml(cell.getValue()),
-          cellClick: this.columnNameCellClick.bind(this),
+          formatter: this.cellFormatter,
           editable: this.isCellEditable.bind(this, 'renameColumn'),
           cssClass: this.customColumnCssClass('renameColumn'),
+          cellClick: this.columnNameCellClick.bind(this),
           frozen: true,
           minWidth: 100,
         },
@@ -313,21 +307,8 @@ export default Vue.extend({
           width: 70,
           cssClass: 'read-only never-editable',
         }),
-        // Optional: Specific autoincrement column for SQLite
-        (this.dialect === 'sqlite' ? {
-          title: 'Auto Inc',
-          field: 'autoIncrement',
-          width: 80,
-          headerTooltip: "Indicates if the column is an auto-incrementing primary key",
-          formatter: vueFormatter(CheckboxFormatterVue),
-          formatterParams: {
-            editable: false
-          },
-          cssClass: 'read-only text-center',
-        } : null),
         this.editable ? trashButton(this.removeRow) : null
       ].filter((c) => !!c)
-
       return result.map((col) => {
         const editable = _.isFunction(col.editable) ? col.editable(FakeCell) : col.editable
         const cssBase = col.cssClass || null
@@ -355,6 +336,8 @@ export default Vue.extend({
       return this.editable && !this.disabledFeatures?.alter?.[feature]
     },
     isCellEditable(feature: string, cell: CellComponent): boolean {
+      // views and materialized views are not editable
+
       if (!this.editable) return false
       if (this.removedRows.includes(cell.getRow())) return false
       const row = cell.getRow()
@@ -381,7 +364,10 @@ export default Vue.extend({
       await this.$emit('refresh')
     },
     collectChanges(): AlterTableSpec {
+
       const alterations = this.editedCells.map((cell: CellComponent) => {
+
+        // renames happen last, so we need to get the original column name here.
         const nameCell = cell.getRow().getCell('columnName')
         const name = nameCell.isEdited() ? nameCell.getInitialValue() : nameCell.getValue()
 
@@ -412,6 +398,7 @@ export default Vue.extend({
         reorder
       }
     },
+    // submission methods
     async submitApply(): Promise<void> {
       try {
         this.error = null
@@ -457,6 +444,7 @@ export default Vue.extend({
       this.removedRows = []
       this.reorderedRows = []
     },
+    // table edit callbacks
     async addRow(): Promise<void> {
       if (this.disabledFeatures?.alter?.addColumn) {
         this.$noty.info(`Adding columns is not supported by ${this.dialect}`)
@@ -467,6 +455,9 @@ export default Vue.extend({
       const defaultType = defaultColumnType || 'VARCHAR(255)'
       const row: RowComponent = await this.tabulator.addRow({columnName: name, dataType: defaultType, nullable: true})
       this.newRows.push(row)
+      // TODO (fix): calling edit() on the column name cell isn't working here.
+      // ideally we could drop users into the first cell to make editing easier
+      // but right now if it fails it breaks the whole table.
     },
     removeRow(_e, cell: CellComponent): void {
       const row = cell.getRow()
@@ -520,6 +511,7 @@ export default Vue.extend({
 
       this.initialColumns = this.tableData.slice(0)
       if (this.tabulator) this.tabulator.destroy()
+      // TODO: a loader would be so cool for tabulator for those gnarly column count tables that people might create...
       this.tabulator = new TabulatorFull(this.$refs.tableSchema, {
         columns: this.tableColumns,
         layout: 'fitColumns',
@@ -552,6 +544,7 @@ export default Vue.extend({
   },
   async mounted() {
     this.tabState.dirty = false
+    // table columns are updated by TabTableProperties on load. So no need to do it here.
     if (!this.active) this.forceRedraw = true
     this.initializeTabulator()
   },
@@ -560,3 +553,4 @@ export default Vue.extend({
   },
 })
 </script>
+
